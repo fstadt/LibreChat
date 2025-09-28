@@ -6,6 +6,7 @@ const {
   MCPOAuthHandler,
   MCPTokenStorage,
   getUserMCPAuthMap,
+  MCPToolCallValidationHandler,
 } = require('@librechat/api');
 const { getMCPManager, getFlowStateManager, getOAuthReconnectionManager } = require('~/config');
 const { getMCPSetupData, getServerConnectionStatus } = require('~/server/services/MCP');

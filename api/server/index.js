@@ -24,6 +24,9 @@ const staticCache = require('./utils/staticCache');
 const noIndex = require('./middleware/noIndex');
 const { seedDatabase } = require('~/models');
 const routes = require('./routes');
+const { createMcpRouter } = require('@librechat/api');
+const { getFlowStateManager } = require('~/config');
+const { requireJwtAuth } = require('~/server/middleware');
 
 const { PORT, HOST, ALLOW_SOCIAL_LOGIN, DISABLE_COMPRESSION, TRUST_PROXY } = process.env ?? {};
 
@@ -137,6 +140,13 @@ const startServer = async () => {
 
   app.use('/api/tags', routes.tags);
   app.use('/api/mcp', routes.mcp);
+  // app.use(
+  //   '/api/mcp',
+  //   createMcpRouter({
+  //     getFlowStateManager,
+  //     requireJwtAuth,
+  //   }),
+  // );
 
   app.use(ErrorController);
 

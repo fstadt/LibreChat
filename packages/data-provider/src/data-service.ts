@@ -337,6 +337,14 @@ export const getToolCalls = (params: q.GetToolCallParams): Promise<q.ToolCallRes
   );
 };
 
+export const validateToolCall = ({ validationId }: { validationId: string }): Promise<unknown> => {
+  return request.post(
+    endpoints.agents({
+      path: `mcp/validation/confirm/${validationId}`,
+    }),
+  );
+};
+
 /* Files */
 
 export const getFiles = (): Promise<f.TFile[]> => {

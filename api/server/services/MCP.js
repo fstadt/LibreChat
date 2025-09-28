@@ -12,6 +12,7 @@ const {
   MCPOAuthHandler,
   normalizeServerName,
   convertWithResolvedRefs,
+  MCPToolCallValidationHandler,
 } = require('@librechat/api');
 const {
   Time,
@@ -134,6 +135,66 @@ function createAbortHandler({ userId, serverName, toolName, flowManager }) {
     logger.info(`[MCP][User: ${userId}][${serverName}][${toolName}] Tool call aborted`);
     const flowId = MCPOAuthHandler.generateFlowId(userId, serverName);
     flowManager.failFlow(flowId, 'mcp_oauth', new Error('Tool call aborted'));
+  };
+}
+
+/**
+ * @param {object} params
+ * @param {ServerResponse} params.res - The Express response object for sending events.
+ * @param {string} params.stepId - The ID of the step in the flow.
+ * @param {ToolCallChunk} params.toolCall - The tool call object containing tool information.
+ * @param {string} params.validationFlowId - The ID of the validation flow.
+ * @param {FlowStateManager<any>} params.flowManager - The flow manager instance.
+ */
+function createValidationStart({ res, stepId, toolCall, validationFlowId, flowManager, signal }) {
+  /**
+   * Creates a function to handle tool call validation requests.
+   * @param {string} validationId - The ID of the validation flow.
+   * @returns {Promise<boolean>} Returns true to indicate the event was sent successfully.
+   */
+  return async function (validationId) {
+    /** @type {{ id: string; delta: AgentToolCallDelta }} */
+    const data = {
+      id: stepId,
+      delta: {
+        type: StepTypes.TOOL_CALLS,
+        tool_calls: [{ ...toolCall, args: '' }],
+        validation: validationId,
+        expires_at: Date.now() + Time.TWO_MINUTES,
+      },
+    };
+    /** Used to ensure the handler (use of `sendEvent`) is only invoked once */
+    await flowManager.createFlowWithHandler(
+      validationFlowId,
+      'tool_validation',
+      async () => {
+        sendEvent(res, { event: GraphEvents.ON_RUN_STEP_DELTA, data });
+        logger.debug('Sent tool call validation request to client');
+        return true;
+      },
+      signal,
+    );
+  };
+}
+
+/**
+ * @param {object} params
+ * @param {ServerResponse} params.res - The Express response object for sending events.
+ * @param {string} params.stepId - The ID of the step in the flow.
+ * @param {ToolCallChunk} params.toolCall - The tool call object containing tool information.
+ */
+function createValidationEnd({ res, stepId, toolCall }) {
+  return async function () {
+    /** @type {{ id: string; delta: AgentToolCallDelta }} */
+    const data = {
+      id: stepId,
+      delta: {
+        type: StepTypes.TOOL_CALLS,
+        tool_calls: [{ ...toolCall }],
+      },
+    };
+    sendEvent(res, { event: GraphEvents.ON_RUN_STEP_DELTA, data });
+    logger.debug('Sent tool call validation success to client');
   };
 }
 
@@ -335,6 +396,7 @@ function createToolInstance({ res, toolName, serverName, toolDefinition, provide
 
       const { args: _args, stepId, ...toolCall } = config.toolCall ?? {};
       const flowId = `${serverName}:oauth_login:${config.metadata.thread_id}:${config.metadata.run_id}`;
+      const validationFlowId = `${serverName}:tool_validation:${config.metadata.thread_id}:${config.metadata.run_id}`;
       const runStepDeltaEmitter = createRunStepDeltaEmitter({
         res,
         stepId,
@@ -350,6 +412,51 @@ function createToolInstance({ res, toolName, serverName, toolDefinition, provide
         stepId,
         toolCall,
       });
+
+      // Create validation start and end functions
+      const validationStart = createValidationStart({
+        res,
+        stepId,
+        toolCall,
+        validationFlowId,
+        flowManager,
+        signal: derivedSignal,
+      });
+      const validationEnd = createValidationEnd({
+        res,
+        stepId,
+        toolCall,
+      });
+
+      // Initiate tool call validation flow
+      const { validationId, flowMetadata } =
+        await MCPToolCallValidationHandler.initiateValidationFlow(
+          userId,
+          serverName,
+          toolName,
+          typeof toolArguments === 'string' ? { input: toolArguments } : toolArguments,
+        );
+
+      // Create validation flow and wait for user confirmation
+      await flowManager.createFlow(validationId, 'mcp_tool_validation', flowMetadata);
+
+      // Send validation request to client
+      await validationStart(validationId);
+
+      try {
+        // Wait for validation to complete
+        await flowManager.waitForFlow(validationId, 'mcp_tool_validation');
+        // Send validation success to client
+        await validationEnd();
+      } catch (error) {
+        logger.error(
+          `[MCP][User: ${userId}][${serverName}] Tool call validation failed for "${toolName}":`,
+          error,
+        );
+        throw new Error(
+          `Tool call validation required for ${serverName}/${toolName}. Please validate the tool call.`,
+        );
+      }
 
       if (derivedSignal) {
         abortHandler = createAbortHandler({ userId, serverName, toolName, flowManager });
@@ -403,6 +510,15 @@ function createToolInstance({ res, toolName, serverName, toolDefinition, provide
       if (isOAuthError) {
         throw new Error(
           `[MCP][${serverName}][${toolName}] OAuth authentication required. Please check the server logs for the authentication URL.`,
+        );
+      }
+
+      /** Validation error, provide a helpful message */
+      const isValidationError = error.message?.includes('mcp_tool_validation');
+
+      if (isValidationError) {
+        throw new Error(
+          `Manual tool call validation by the user required for ${serverName}/${toolName}, but denied or failed.`,
         );
       }
 

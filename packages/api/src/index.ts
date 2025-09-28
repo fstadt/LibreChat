@@ -1,12 +1,15 @@
 export * from './app';
 /* Auth */
 export * from './auth';
+/* Routes */
+export * from './server/routes';
 /* MCP */
 export * from './mcp/MCPManager';
 export * from './mcp/connection';
 export * from './mcp/oauth';
 export * from './mcp/auth';
 export * from './mcp/zod';
+export * from './mcp/validation';
 /* Utilities */
 export * from './format';
 export * from './mcp/utils';

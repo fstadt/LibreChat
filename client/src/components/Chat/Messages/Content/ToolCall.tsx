@@ -3,7 +3,7 @@ import { Button } from '@librechat/client';
 import { TriangleAlert } from 'lucide-react';
 import { actionDelimiter, actionDomainSeparator, Constants } from 'librechat-data-provider';
 import type { TAttachment } from 'librechat-data-provider';
-import { useLocalize, useProgress } from '~/hooks';
+import { useLocalize, useProgress, useAuthContext } from '~/hooks';
 import { AttachmentGroup } from './Parts';
 import ToolCallInfo from './ToolCallInfo';
 import ProgressText from './ProgressText';
@@ -17,6 +17,7 @@ export default function ToolCall({
   output,
   attachments,
   auth,
+  validation = true,
 }: {
   initialProgress: number;
   isSubmitting: boolean;
@@ -25,6 +26,7 @@ export default function ToolCall({
   output?: string | null;
   attachments?: TAttachment[];
   auth?: string;
+  validation?: string;
   expires_at?: number;
 }) {
   const localize = useLocalize();
@@ -95,6 +97,42 @@ export default function ToolCall({
       return '';
     }
   }, [auth]);
+
+  const [validationConfirmed, setValidationConfirmed] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
+  const { token  } = useAuthContext();
+
+  const handleValidationConfirm = async () => {
+    if (!validation || validationConfirmed) {
+      return;
+    }
+
+    setIsConfirming(true);
+    setValidationError(null);
+
+    try {
+      const response = await fetch(`/api/mcp/validation/confirm/${validation}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to confirm validation');
+      }
+
+      setValidationConfirmed(true);
+    } catch (error) {
+      logger.error('Failed to confirm tool call validation:', error);
+      setValidationError(error instanceof Error ? error.message : 'Unknown error');
+    } finally {
+      setIsConfirming(false);
+    }
+  };
 
   const progress = useProgress(initialProgress);
   const cancelled = (!isSubmitting && progress < 1) || error === true;
@@ -232,6 +270,33 @@ export default function ToolCall({
           <p className="flex items-center text-xs text-text-warning">
             <TriangleAlert className="mr-1.5 inline-block h-4 w-4" />
             {localize('com_assistants_allow_sites_you_trust')}
+          </p>
+        </div>
+      )}
+
+      {validation != null && validation && progress < 1 && !cancelled && !validationConfirmed && (
+        <div className="flex w-full flex-col gap-2.5">
+          <div className="mb-1 mt-2">
+            <Button
+              className="font-mediu inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm"
+              variant="default"
+              disabled={isConfirming}
+              onClick={handleValidationConfirm}
+            >
+              {isConfirming 
+                ? localize('com_ui_confirming') 
+                : localize('com_ui_confirm_tool_call')}
+            </Button>
+          </div>
+          {validationError && (
+            <p className="flex items-center text-xs text-text-warning">
+              <TriangleAlert className="mr-1.5 inline-block h-4 w-4" />
+              {validationError}
+            </p>
+          )}
+          <p className="flex items-center text-xs text-text-warning">
+            <TriangleAlert className="mr-1.5 inline-block h-4 w-4" />
+            {localize('com_assistants_confirm_tool_calls_you_trust')}
           </p>
         </div>
       )}

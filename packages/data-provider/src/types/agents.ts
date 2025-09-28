@@ -200,6 +200,7 @@ export namespace Agents {
     type: StepTypes.TOOL_CALLS | string;
     tool_calls?: ToolCallChunk[];
     auth?: string;
+    validation?: string;
     expires_at?: number;
   };
   export type AgentToolCall = FunctionToolCall | ToolCall;
